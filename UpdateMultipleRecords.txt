@@ -1,0 +1,97 @@
+	public async Task<IEnumerable<InviteMember>> SendBulkInviteLinksbyEmail(Guid ownerGuid, Guid inviteGuid, string uploadedFilePath)
+	{
+		await _authorizationService.CheckAuthorization(ownerGuid, (inviteRoles));
+		string filter = "(PartitionKey eq '" + ownerGuid + "')";
+		filter += " and (InviteGuid eq guid'" + inviteGuid.ToString() + "')";
+
+		var result = await _azureTableQueryService.QueryListTableAsync<InviteMember>(_inviteMemberTableClient, filter);
+
+		var existingUserGroup = await _userGroupService.GetUserGroup(ownerGuid, inviteGuid);
+		string inviteLink = string.Format(InviteLinkBase, ownerGuid);
+		// Create a list to store email addresses from the CSV file
+		var emailAddresses = new List<string>();
+
+		using (var reader = new StreamReader(uploadedFilePath))
+		{
+			using (var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture)))
+			{
+				//csv.Configuration.HasHeaderRecord = false;
+
+				while (csv.Read())
+				{
+					string emailAddress = csv.GetField<string>(0); // Access the first column (index 0)
+					string Name = csv.GetField<string>(1);
+					if (!string.IsNullOrWhiteSpace(emailAddress))
+					{
+						// getting orginial domain for comparision with upload file email address
+						string domainname = result[0].EMail; // this is for getting domain name
+						string[] domainnameparts = domainname.Split('@');
+						string domain = string.Empty;
+						if (domainnameparts.Length == 2)
+						{
+							domain = domainnameparts[1];
+						}
+						//end logic for getting original domain
+
+						var parts = emailAddress.Split('@');
+						if (parts.Length == 2)
+						{
+							// Check if the domain matches the allowed domain
+							if (parts[1].Equals(domain, StringComparison.OrdinalIgnoreCase))
+							{
+								// var emailResult = _emailService.SendBulkInviteEmail(emailAddress, name, inviteLink, existingUserGroup, result[0]);
+
+								emailAddresses.Add(emailAddress);
+
+							}
+						}
+					}
+
+				}
+			}
+		}
+		// Send bulk invite emails with the invite link and the uploaded CSV file
+		foreach (var emailAddress in emailAddresses)
+		{
+			// Send an individual email to each recipient
+			var emailResult = _emailService.SendBulkInviteEmail(emailAddress, inviteLink, existingUserGroup, result[0]);
+		}
+
+		return result;
+	}
+
+
+---------------------------------------------------------------------------------
+[HttpPost("{ownerGuid}/{inviteGuid}/{token}")]
+public async Task<IEnumerable<InviteMember>> SendBulkInviteLinks(Guid ownerGuid, Guid inviteGuid, string token, IFormFile file)
+{
+	if (file == null || file.Length == 0)
+	{
+		throw new HttpInternalErrorException("File has no data");
+	}
+	else
+	{
+		string uploadedFilePath = Path.GetTempFileName();
+		using (var stream = new FileStream(uploadedFilePath, FileMode.Create))
+		{
+			await file.CopyToAsync(stream);
+		}
+		try
+		{
+			// Call the email sending method with the uploaded file path
+			await _IInvitesService.SendBulkInviteLinksbyEmail(ownerGuid, inviteGuid, uploadedFilePath);
+		}
+		finally
+		{
+			// Use a try-finally block to ensure the file is deleted, even if an exception occurs
+			if (System.IO.File.Exists(uploadedFilePath))
+			{
+				System.IO.File.Delete(uploadedFilePath);
+			}
+		}
+	}
+	return null; // You may want to return a meaningful response.
+}
+------------------------------------------------------------------------------
+
+Task<IEnumerable<InviteMember>> SendBulkInviteLinksbyEmail(Guid ownerGuid, Guid inviteGuid, string uploadedFilePath);
